@@ -83,15 +83,22 @@ def _load_chat_history(user_id, notebook_id):
     history = []
     for item in messages:
         if isinstance(item, dict):
-            history.append((item.get("user", ""), item.get("assistant", "")))
+            # Convert old format if needed
+            if "role" in item and "content" in item:
+                history.append(item)
+            elif "user" in item and "assistant" in item:
+                if item["user"]:
+                    history.append({"role": "user", "content": item["user"]})
+                if item["assistant"]:
+                    history.append({"role": "assistant", "content": item["assistant"]})
     return history
 
 
 def _save_chat_history(user_id, notebook_id, history):
     paths = _notebook_paths(user_id, notebook_id)
-    messages = [{"user": u, "assistant": a} for u, a in history]
+    # Save as list of dicts with 'role' and 'content'
     with open(paths["chats"], "w", encoding="utf-8") as f:
-        json.dump(messages, f, indent=2)
+        json.dump(history, f, indent=2)
 
 
 def load_notebooks(user_id):
@@ -139,7 +146,14 @@ def switch_notebook(user_id, notebook_id):
 def respond(message, history, user_id, notebook_id):
     if not message or not user_id or not notebook_id:
         return "", history
-    history = history + [(message, "Stub response. Integrate backend here.")]
+    # Ensure history is a list of dicts with 'role' and 'content'
+    if not history or not isinstance(history, list):
+        history = []
+    # Add user message
+    history = history + [{"role": "user", "content": message}]
+    # Add assistant response (stub)
+    assistant_response = "Stub response. Integrate backend here."
+    history = history + [{"role": "assistant", "content": assistant_response}]
     _save_chat_history(user_id, notebook_id, history)
     return "", history
 
@@ -200,4 +214,4 @@ with gr.Blocks(title="RAG NotebookLM Clone") as demo:
     )
 
 
-demo.launch()
+demo.launch(server_name="0.0.0.0", server_port=7860)
