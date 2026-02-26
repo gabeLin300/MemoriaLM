@@ -113,6 +113,21 @@ class NotebookStore:
             return None
         return NotebookOut(**data)
 
+    def require_notebook_dir(self, user_id: str, notebook_id: str) -> Path:
+        notebook = self.get(user_id, notebook_id)
+        if notebook is None:
+            raise FileNotFoundError("Notebook not found")
+        return self._notebook_path(user_id, notebook_id)
+
+    def files_raw_dir(self, user_id: str, notebook_id: str) -> Path:
+        return self.require_notebook_dir(user_id, notebook_id) / "files_raw"
+
+    def files_extracted_dir(self, user_id: str, notebook_id: str) -> Path:
+        return self.require_notebook_dir(user_id, notebook_id) / "files_extracted"
+
+    def chroma_dir(self, user_id: str, notebook_id: str) -> Path:
+        return self.require_notebook_dir(user_id, notebook_id) / "chroma"
+
     def rename(self, user_id: str, notebook_id: str, name: str) -> Optional[NotebookOut]:
         notebook = self.get(user_id, notebook_id)
         if notebook is None:
