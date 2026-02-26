@@ -1,4 +1,7 @@
-fastapi
-uvicorn
-pydantic
-gradio
+huggingface_hub
+sentence-transformers
+chromadb
+pypdf
+python-pptx
+beautifulsoup4
+requests
