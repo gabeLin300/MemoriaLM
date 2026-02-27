@@ -1,9 +1,16 @@
 import json
 import os
+import sys
+from pathlib import Path
 from typing import Any
 
 import gradio as gr
 import requests
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from backend.services.env import load_local_env
 
 load_local_env()
@@ -215,6 +222,109 @@ def send_message(message: str, history, user_id: str, notebook_id: str):
         return "", history, str(exc)
 
 
+def _empty_artifacts_payload() -> dict[str, Any]:
+    return {"reports": [], "quizzes": [], "podcasts": []}
+
+
+def _artifact_outputs_from_payload(payload: dict[str, Any]):
+    reports = payload.get("reports") or []
+    quizzes = payload.get("quizzes") or []
+    podcasts = payload.get("podcasts") or []
+
+    latest_report = reports[-1].get("path") if reports else None
+    latest_quiz = quizzes[-1].get("path") if quizzes else None
+
+    latest_transcript = None
+    latest_audio = None
+    if podcasts:
+        last = podcasts[-1] or {}
+        transcript = last.get("transcript") or {}
+        audio = last.get("audio") or {}
+        latest_transcript = transcript.get("path")
+        latest_audio = audio.get("path")
+    return latest_report, latest_quiz, latest_transcript, latest_audio
+
+
+def refresh_artifacts(user_id: str, notebook_id: str):
+    user_id = (user_id or "").strip()
+    if not user_id or not notebook_id:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, "Select a notebook first."
+    try:
+        payload = _api_request("GET", f"/api/notebooks/{notebook_id}/artifacts", params={"user_id": user_id})
+        report, quiz, transcript, audio = _artifact_outputs_from_payload(payload)
+        return gr.JSON(value=payload), report, quiz, transcript, audio, ""
+    except Exception as exc:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, str(exc)
+
+
+def sync_artifacts_on_notebook_change(user_id: str, notebook_id: str):
+    payload_json, report, quiz, transcript, audio, _status = refresh_artifacts(user_id, notebook_id)
+    return payload_json, report, quiz, transcript, audio
+
+
+def generate_report_artifact(user_id: str, notebook_id: str, artifact_prompt: str):
+    user_id = (user_id or "").strip()
+    if not user_id or not notebook_id:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, "Select a notebook first."
+    try:
+        resp = _api_request(
+            "POST",
+            f"/api/notebooks/{notebook_id}/artifacts/report",
+            json_body={"user_id": user_id, "prompt": (artifact_prompt or "").strip() or None},
+            timeout=180,
+        )
+        payload_json, report, quiz, transcript, audio, _ = refresh_artifacts(user_id, notebook_id)
+        return payload_json, report, quiz, transcript, audio, str(resp.get("message", "Generated report."))
+    except Exception as exc:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, str(exc)
+
+
+def generate_quiz_artifact(user_id: str, notebook_id: str, artifact_prompt: str, num_questions: float):
+    user_id = (user_id or "").strip()
+    if not user_id or not notebook_id:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, "Select a notebook first."
+    try:
+        resp = _api_request(
+            "POST",
+            f"/api/notebooks/{notebook_id}/artifacts/quiz",
+            json_body={
+                "user_id": user_id,
+                "prompt": (artifact_prompt or "").strip() or None,
+                "num_questions": int(num_questions),
+            },
+            timeout=180,
+        )
+        payload_json, report, quiz, transcript, audio, _ = refresh_artifacts(user_id, notebook_id)
+        return payload_json, report, quiz, transcript, audio, str(resp.get("message", "Generated quiz."))
+    except Exception as exc:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, str(exc)
+
+
+def generate_podcast_artifact(user_id: str, notebook_id: str, artifact_prompt: str):
+    user_id = (user_id or "").strip()
+    if not user_id or not notebook_id:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, "Select a notebook first."
+    try:
+        resp = _api_request(
+            "POST",
+            f"/api/notebooks/{notebook_id}/artifacts/podcast",
+            json_body={"user_id": user_id, "prompt": (artifact_prompt or "").strip() or None},
+            timeout=240,
+        )
+        payload_json, report, quiz, transcript, audio, _ = refresh_artifacts(user_id, notebook_id)
+        return payload_json, report, quiz, transcript, audio, str(resp.get("message", "Generated podcast."))
+    except Exception as exc:
+        payload = _empty_artifacts_payload()
+        return gr.JSON(value=payload), None, None, None, None, str(exc)
+
+
 with gr.Blocks(title="MemoriaLM") as demo:
     notebook_state = gr.State([])
 
@@ -246,6 +356,24 @@ with gr.Blocks(title="MemoriaLM") as demo:
             url_btn = gr.Button("Ingest URL")
             sources_json = gr.JSON(label="Ingested Sources", value={"sources": []})
 
+            gr.Markdown("## Artifacts")
+            artifact_prompt = gr.Textbox(
+                label="Artifact focus prompt (optional)",
+                placeholder="Focus on topic X and how it relates to topic Y",
+            )
+            quiz_questions = gr.Slider(minimum=3, maximum=15, step=1, value=8, label="Quiz questions")
+            with gr.Row():
+                refresh_artifacts_btn = gr.Button("Refresh Artifacts")
+                report_btn = gr.Button("Generate Report")
+            with gr.Row():
+                quiz_btn = gr.Button("Generate Quiz")
+                podcast_btn = gr.Button("Generate Podcast")
+            artifacts_json = gr.JSON(label="Generated Artifacts", value=_empty_artifacts_payload())
+            latest_report_file = gr.File(label="Latest Report (.md)", interactive=False)
+            latest_quiz_file = gr.File(label="Latest Quiz (.md)", interactive=False)
+            latest_podcast_transcript_file = gr.File(label="Latest Podcast Transcript (.md)", interactive=False)
+            latest_podcast_audio = gr.Audio(label="Latest Podcast Audio (.mp3)", type="filepath", interactive=False)
+
         with gr.Column(scale=2, min_width=420):
             gr.Markdown("## Chat")
             chatbot = gr.Chatbot(height=480)
@@ -253,12 +381,12 @@ with gr.Blocks(title="MemoriaLM") as demo:
                 message = gr.Textbox(label="Message", placeholder="Ask about your sources...", scale=4)
                 send_btn = gr.Button("Send", scale=1)
 
-    refresh_btn.click(
+    refresh_evt = refresh_btn.click(
         load_notebooks,
         inputs=[user_id],
         outputs=[notebook_selector, notebook_state, sources_json, chatbot, status_box],
     )
-    user_id.change(
+    user_change_evt = user_id.change(
         load_notebooks,
         inputs=[user_id],
         outputs=[notebook_selector, notebook_state, sources_json, chatbot, status_box],
@@ -285,6 +413,40 @@ with gr.Blocks(title="MemoriaLM") as demo:
         inputs=[user_id, notebook_selector],
         outputs=[sources_json, chatbot, status_box],
     )
+    notebook_selector.change(
+        sync_artifacts_on_notebook_change,
+        inputs=[user_id, notebook_selector],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+        ],
+    )
+
+    refresh_evt.then(
+        sync_artifacts_on_notebook_change,
+        inputs=[user_id, notebook_selector],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+        ],
+    )
+    user_change_evt.then(
+        sync_artifacts_on_notebook_change,
+        inputs=[user_id, notebook_selector],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+        ],
+    )
 
     upload_btn.click(
         upload_source,
@@ -295,6 +457,55 @@ with gr.Blocks(title="MemoriaLM") as demo:
         ingest_url_source,
         inputs=[user_id, notebook_selector, url_input],
         outputs=[sources_json, status_box],
+    )
+
+    refresh_artifacts_btn.click(
+        refresh_artifacts,
+        inputs=[user_id, notebook_selector],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+            status_box,
+        ],
+    )
+    report_btn.click(
+        generate_report_artifact,
+        inputs=[user_id, notebook_selector, artifact_prompt],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+            status_box,
+        ],
+    )
+    quiz_btn.click(
+        generate_quiz_artifact,
+        inputs=[user_id, notebook_selector, artifact_prompt, quiz_questions],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+            status_box,
+        ],
+    )
+    podcast_btn.click(
+        generate_podcast_artifact,
+        inputs=[user_id, notebook_selector, artifact_prompt],
+        outputs=[
+            artifacts_json,
+            latest_report_file,
+            latest_quiz_file,
+            latest_podcast_transcript_file,
+            latest_podcast_audio,
+            status_box,
+        ],
     )
 
     send_btn.click(

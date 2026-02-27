@@ -70,3 +70,34 @@ class ChatMessageOut(BaseModel):
 
 class ChatHistoryOut(BaseModel):
     messages: List[ChatMessageOut]
+
+
+class ArtifactGenerateRequest(BaseModel):
+    user_id: str
+    prompt: Optional[str] = None
+    num_questions: int = 8
+
+
+class ArtifactFileOut(BaseModel):
+    name: str
+    path: str
+    created_at: str
+
+
+class PodcastArtifactOut(BaseModel):
+    transcript: Optional[ArtifactFileOut] = None
+    audio: Optional[ArtifactFileOut] = None
+
+
+class ArtifactListOut(BaseModel):
+    reports: List[ArtifactFileOut]
+    quizzes: List[ArtifactFileOut]
+    podcasts: List[PodcastArtifactOut]
+
+
+class ArtifactGenerateOut(BaseModel):
+    artifact_type: str
+    message: str
+    markdown_path: str
+    audio_path: Optional[str] = None
+    created_at: str

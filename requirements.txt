@@ -6,3 +6,4 @@ python-pptx
 beautifulsoup4
 requests
 python-multipart
+lameenc
