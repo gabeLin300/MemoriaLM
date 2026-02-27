@@ -41,3 +41,28 @@ class ChromaNotebookStore:
 
     def count(self) -> int:
         return self._get_collection().count()
+
+    def query(self, query_embedding: List[float], k: int = 5) -> List[Dict]:
+        if not query_embedding:
+            return []
+        collection = self._get_collection()
+        result = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=max(1, k),
+            include=["documents", "metadatas", "distances"],
+        )
+        ids = (result.get("ids") or [[]])[0]
+        docs = (result.get("documents") or [[]])[0]
+        metas = (result.get("metadatas") or [[]])[0]
+        dists = (result.get("distances") or [[]])[0]
+        rows: List[Dict] = []
+        for i, chunk_id in enumerate(ids):
+            rows.append(
+                {
+                    "chunk_id": chunk_id,
+                    "text": docs[i] if i < len(docs) else "",
+                    "metadata": metas[i] if i < len(metas) and metas[i] else {},
+                    "distance": dists[i] if i < len(dists) else None,
+                }
+            )
+        return rows

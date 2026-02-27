@@ -128,6 +128,31 @@ class NotebookStore:
     def chroma_dir(self, user_id: str, notebook_id: str) -> Path:
         return self.require_notebook_dir(user_id, notebook_id) / "chroma"
 
+    def chat_messages_path(self, user_id: str, notebook_id: str) -> Path:
+        return self.require_notebook_dir(user_id, notebook_id) / "chat" / "messages.jsonl"
+
+    def append_chat_message(self, user_id: str, notebook_id: str, message: dict) -> None:
+        path = self.chat_messages_path(user_id, notebook_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(message) + "\n")
+
+    def read_chat_messages(self, user_id: str, notebook_id: str) -> List[dict]:
+        path = self.chat_messages_path(user_id, notebook_id)
+        if not path.exists():
+            return []
+        messages: List[dict] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                messages.append(payload)
+        return messages
+
     def rename(self, user_id: str, notebook_id: str, name: str) -> Optional[NotebookOut]:
         notebook = self.get(user_id, notebook_id)
         if notebook is None:

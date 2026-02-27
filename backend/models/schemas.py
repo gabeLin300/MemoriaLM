@@ -40,3 +40,33 @@ class SourceOut(BaseModel):
 
 class SourceListOut(BaseModel):
     sources: List[SourceOut]
+
+
+class ChatRequest(BaseModel):
+    user_id: str
+    message: str
+    top_k: int = 5
+
+
+class CitationOut(BaseModel):
+    source_name: str
+    source_type: str
+    location: str
+    chunk_id: str
+
+
+class ChatResponseOut(BaseModel):
+    answer: str
+    citations: List[CitationOut]
+    used_chunks: int
+
+
+class ChatMessageOut(BaseModel):
+    role: str
+    content: str
+    created_at: str
+    citations: Optional[List[CitationOut]] = None
+
+
+class ChatHistoryOut(BaseModel):
+    messages: List[ChatMessageOut]
