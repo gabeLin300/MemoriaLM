@@ -1,8 +1,13 @@
 import json
 import os
 import sys
+import atexit
+import socket
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import gradio as gr
 import requests
@@ -16,6 +21,63 @@ from backend.services.env import load_local_env
 load_local_env()
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+_backend_process: subprocess.Popen | None = None
+
+
+def _is_port_open(host: str, port: int, timeout: float = 0.4) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        return sock.connect_ex((host, port)) == 0
+
+
+def _maybe_start_local_backend() -> None:
+    global _backend_process
+
+    if os.getenv("DISABLE_AUTO_BACKEND", "").strip().lower() in {"1", "true", "yes"}:
+        return
+
+    parsed = urlparse(BACKEND_URL)
+    host = parsed.hostname
+    port = parsed.port or 80
+    if host not in {"127.0.0.1", "localhost"}:
+        return
+    if _is_port_open(host, port):
+        return
+
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(REPO_ROOT)
+
+    _backend_process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.app:app",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+
+    def _stop_backend() -> None:
+        proc = _backend_process
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=6)
+            except Exception:
+                proc.kill()
+
+    atexit.register(_stop_backend)
+
+    for _ in range(25):
+        if _is_port_open(host, port):
+            return
+        time.sleep(0.2)
 
 
 def _api_request(method: str, path: str, *, params=None, json_body=None, files=None, data=None, timeout: int = 60):
@@ -520,4 +582,6 @@ with gr.Blocks(title="MemoriaLM") as demo:
     )
 
 
-demo.launch()
+if __name__ == "__main__":
+    _maybe_start_local_backend()
+    demo.launch()
