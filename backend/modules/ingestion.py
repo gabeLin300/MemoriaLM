@@ -56,6 +56,38 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[st
         i += chunk_size - overlap
     return chunks
 
+# ADDED normalized extracted text and reject empty extractable uploads
+def normalize_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = "\n".join(line.rstrip() for line in normalized.split("\n"))
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
+def format_extracted_text(segments: List[Dict[str, str]], source_type: str) -> str:
+    cleaned_segments: List[Dict[str, str]] = []
+    for seg in segments:
+        cleaned = normalize_text(seg.get("text", ""))
+        if not cleaned:
+            continue
+        cleaned_segments.append(
+            {
+                "location": seg.get("location", "unknown"),
+                "text": cleaned,
+            }
+        )
+
+    if not cleaned_segments:
+        return ""
+
+    if source_type == "txt":
+        return cleaned_segments[0]["text"]
+
+    blocks: List[str] = []
+    for seg in cleaned_segments:
+        blocks.append(f"[{seg['location']}]\n{seg['text']}")
+    return "\n\n".join(blocks)
+
 
 def _read_txt(path: Path) -> List[Dict[str, str]]:
     text = path.read_text(encoding="utf-8", errors="ignore")
@@ -226,7 +258,10 @@ def ingest_uploaded_bytes(
         if tmp_path.exists():
             tmp_path.unlink()
 
-    extracted_text = "\n\n".join(seg["text"].strip() for seg in segments if seg.get("text", "").strip())
+# ADDED Safeguard for empty documents, upon empty document return error
+    extracted_text = format_extracted_text(segments, source_type)
+    if not extracted_text:
+        raise ValueError("No extractable text found in uploaded file")
     source_id = _source_id_for(content, filename)
     chunks = _chunk_segments(
         segments,
