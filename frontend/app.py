@@ -385,6 +385,11 @@ def generate_podcast_artifact(user_id: str, notebook_id: str, artifact_prompt: s
     except Exception as exc:
         payload = _empty_artifacts_payload()
         return gr.JSON(value=payload), None, None, None, None, str(exc)
+    
+def greet_user(profile: gr.OAuthProfile | None) -> tuple[str | None, str]:
+    if profile is None:
+        return None, "User not logged in."
+    return profile.username, f"Welcome {profile.username}"
 
 
 with gr.Blocks(title="MemoriaLM") as demo:
@@ -392,25 +397,32 @@ with gr.Blocks(title="MemoriaLM") as demo:
 
     gr.Markdown("# MemoriaLM")
     gr.Markdown("NotebookLM-style RAG app (Phase 4 UI wired to backend APIs)")
+    gr.LoginButton()
+    user_id = gr.State()
+    login_message = gr.Markdown()
+    demo.load(greet_user, outputs=[user_id, login_message])
+
+    if user_id is None:
+        gr.Markdown("Please log in to access your notebooks.")
+        gr.update(visible=False)
 
     with gr.Row():
-        user_id = gr.Textbox(label="User ID", placeholder="demo-user")
         backend_url_info = gr.Textbox(label="Backend URL", value=BACKEND_URL, interactive=False)
 
     status_box = gr.Textbox(label="Status", interactive=False)
 
     with gr.Row():
         with gr.Column(scale=1, min_width=280):
-            gr.Markdown("## Notebooks")
-            notebook_name = gr.Textbox(label="Notebook name")
-            with gr.Row():
-                refresh_btn = gr.Button("Refresh")
-                create_btn = gr.Button("Create")
-            notebook_selector = gr.Dropdown(label="Notebook", choices=[], value=None)
-            with gr.Row():
-                rename_btn = gr.Button("Rename")
-                delete_btn = gr.Button("Delete")
-
+            with gr.Accordion("Notebook Management", open=True, elem_classes=["card"]):
+                notebook_name = gr.Textbox(label="Notebook name")
+                with gr.Row():
+                    refresh_btn = gr.Button("Refresh")
+                    create_btn = gr.Button("Create")
+                notebook_selector = gr.Dropdown(label="Notebook", choices=[], value=None)
+                with gr.Row():
+                    rename_btn = gr.Button("Rename")
+                    delete_btn = gr.Button("Delete")
+    
             gr.Markdown("## Sources")
             upload_file = gr.File(label="Upload PDF/PPTX/TXT", type="filepath")
             upload_btn = gr.Button("Ingest File")
@@ -418,30 +430,32 @@ with gr.Blocks(title="MemoriaLM") as demo:
             url_btn = gr.Button("Ingest URL")
             sources_json = gr.JSON(label="Ingested Sources", value={"sources": []})
 
-            gr.Markdown("## Artifacts")
-            artifact_prompt = gr.Textbox(
-                label="Artifact focus prompt (optional)",
-                placeholder="Focus on topic X and how it relates to topic Y",
-            )
-            quiz_questions = gr.Slider(minimum=3, maximum=15, step=1, value=8, label="Quiz questions")
-            with gr.Row():
-                refresh_artifacts_btn = gr.Button("Refresh Artifacts")
-                report_btn = gr.Button("Generate Report")
-            with gr.Row():
-                quiz_btn = gr.Button("Generate Quiz")
-                podcast_btn = gr.Button("Generate Podcast")
-            artifacts_json = gr.JSON(label="Generated Artifacts", value=_empty_artifacts_payload())
-            latest_report_file = gr.File(label="Latest Report (.md)", interactive=False)
-            latest_quiz_file = gr.File(label="Latest Quiz (.md)", interactive=False)
-            latest_podcast_transcript_file = gr.File(label="Latest Podcast Transcript (.md)", interactive=False)
-            latest_podcast_audio = gr.Audio(label="Latest Podcast Audio (.mp3)", type="filepath", interactive=False)
-
         with gr.Column(scale=2, min_width=420):
-            gr.Markdown("## Chat")
-            chatbot = gr.Chatbot(height=480)
-            with gr.Row():
-                message = gr.Textbox(label="Message", placeholder="Ask about your sources...", scale=4)
-                send_btn = gr.Button("Send", scale=1)
+            with gr.Tabs():
+                with gr.Tab("Chat"):
+                    gr.Markdown("## Chat")
+                    chatbot = gr.Chatbot(height=480)
+                    with gr.Row():
+                        message = gr.Textbox(label="Message", placeholder="Ask about your sources...", scale=4)
+                        send_btn = gr.Button("Send", scale=1)
+                with gr.Tab("Artifacts"):
+                    gr.Markdown("## Artifacts")
+                    artifact_prompt = gr.Textbox(
+                        label="Artifact focus prompt (optional)",
+                        placeholder="Focus on topic X and how it relates to topic Y",
+                    )
+                    quiz_questions = gr.Slider(minimum=3, maximum=15, step=1, value=8, label="Quiz questions")
+                    with gr.Row():
+                        refresh_artifacts_btn = gr.Button("Refresh Artifacts")
+                        report_btn = gr.Button("Generate Report")
+                    with gr.Row():
+                        quiz_btn = gr.Button("Generate Quiz")
+                        podcast_btn = gr.Button("Generate Podcast")
+                    artifacts_json = gr.JSON(label="Generated Artifacts", value=_empty_artifacts_payload())
+                    latest_report_file = gr.File(label="Latest Report (.md)", interactive=False)
+                    latest_quiz_file = gr.File(label="Latest Quiz (.md)", interactive=False)
+                    latest_podcast_transcript_file = gr.File(label="Latest Podcast Transcript (.md)", interactive=False)
+                    latest_podcast_audio = gr.Audio(label="Latest Podcast Audio (.mp3)", type="filepath", interactive=False)
 
     refresh_evt = refresh_btn.click(
         load_notebooks,
