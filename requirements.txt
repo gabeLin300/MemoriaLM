@@ -7,3 +7,5 @@ beautifulsoup4
 requests
 python-multipart
 lameenc
+soundfile
+transformers
