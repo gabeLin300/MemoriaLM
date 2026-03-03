@@ -4,6 +4,10 @@ import math
 import os
 import re
 import wave
+import torch
+import io
+import soundfile as sf
+from transformers import AutoTokenizer, VitsModel
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +22,13 @@ from backend.models.schemas import (
 from backend.services.llm import llm_service
 from backend.services.storage import NotebookStore
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+_vits_model = VitsModel.from_pretrained("facebook/mms-tts-eng")
+_tokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -183,40 +194,34 @@ def _is_mp3(audio_bytes: bytes) -> bool:
     return audio_bytes.startswith(b"ID3") or audio_bytes[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}
 
 
-def _synthetic_mp3(duration_seconds: float) -> bytes:
-    sample_rate = 22050
-    channels = 1
-    total_samples = int(sample_rate * max(1.0, min(duration_seconds, 90.0)))
-    pcm = bytearray()
-    for i in range(total_samples):
-        # Soft tone so the output is valid audio even without external TTS.
-        value = int(2500 * math.sin(2 * math.pi * 220 * (i / sample_rate)))
-        pcm.extend(value.to_bytes(2, byteorder="little", signed=True))
-    return _encode_pcm_to_mp3(bytes(pcm), sample_rate, channels)
+def clean_transcript_for_tts(transcript: str) -> str:
+    lines = []
+    for line in transcript.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Remove markdown formatting and speaker labels.
+        line = re.sub(r"\*\*Host:\*\*", " ", line, flags=re.IGNORECASE)
+        line = re.sub(r"\*\*Co-Host:\*\*", " ", line, flags=re.IGNORECASE)
+        line = re.sub(r"[*_#>`]", " ", line)
+        line = re.sub(r'[^\x00-\x7F]+', ' ', line)
+        lines.append(line)
+    return " ".join(lines)
 
 
 def _synthesize_podcast_mp3(transcript_text: str) -> bytes:
-    tts_text = " ".join(line.strip() for line in transcript_text.splitlines() if line.strip())
-    tts_text = tts_text[:1800]
+    tts_text = clean_transcript_for_tts(transcript_text)[:1800]
 
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
-    model = os.getenv("HF_TTS_MODEL", "facebook/mms-tts-eng")
+    inputs = _tokenizer(tts_text, return_tensors="pt")
 
-    if token:
-        try:
-            from huggingface_hub import InferenceClient
+    with torch.no_grad():
+        waveform = _vits_model(**inputs).waveform.squeeze().cpu().numpy()
 
-            client = InferenceClient(token=token)
-            audio_bytes = client.text_to_speech(tts_text, model=model)
-            if _is_mp3(audio_bytes):
-                return audio_bytes
-            if audio_bytes.startswith(b"RIFF"):
-                return _wav_bytes_to_mp3(audio_bytes)
-        except Exception:
-            pass
+    wav_buffer = io.BytesIO()
+    sf.write(wav_buffer, waveform, 16000, format="WAV")
+    wav_bytes = wav_buffer.getvalue()
 
-    duration = max(3.0, min(60.0, len(tts_text) / 24.0))
-    return _synthetic_mp3(duration)
+    return _wav_bytes_to_mp3(wav_bytes)
 
 
 def _write_markdown_artifact(artifact_dir: Path, prefix: str, content: str) -> Path:
