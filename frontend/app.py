@@ -325,61 +325,69 @@ def _source_choices_from_payload(payload: dict[str, Any]) -> list[tuple[str, str
         source_id = str(src.get("source_id", ""))
         if not source_id:
             continue
-        enabled = bool(src.get("enabled", True))
-        marker = "ON" if enabled else "OFF"
         name = str(src.get("source_name", source_id))
-        choices.append((f"{marker} | {name} [{source_id[:8]}]", source_id))
+        choices.append((f"{name} [{source_id[:8]}]", source_id))
     return choices
 
 
-def _source_enabled_from_payload(payload: dict[str, Any], source_id: str | None) -> bool:
-    if not source_id or not isinstance(payload, dict):
-        return True
+def _enabled_source_ids_from_payload(payload: dict[str, Any]) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    enabled_ids: list[str] = []
     for src in payload.get("sources", []):
-        if str(src.get("source_id", "")) == source_id:
-            return bool(src.get("enabled", True))
-    return True
+        source_id = str(src.get("source_id", ""))
+        if source_id and bool(src.get("enabled", True)):
+            enabled_ids.append(source_id)
+    return enabled_ids
 
 
-def refresh_source_controls(sources_payload: dict[str, Any], selected_source_id: str | None):
+def refresh_source_controls(sources_payload: dict[str, Any]):
     choices = _source_choices_from_payload(sources_payload or {"sources": []})
-    if not choices:
-        return gr.Dropdown(choices=[], value=None), gr.Checkbox(value=True, interactive=False)
-    values = [v for _label, v in choices]
-    value = selected_source_id if selected_source_id in values else values[0]
-    enabled = _source_enabled_from_payload(sources_payload, value)
-    return gr.Dropdown(choices=choices, value=value), gr.Checkbox(value=enabled, interactive=True)
+    enabled_values = _enabled_source_ids_from_payload(sources_payload or {"sources": []})
+    return gr.CheckboxGroup(choices=choices, value=enabled_values, interactive=bool(choices))
 
 
-def on_source_selected(sources_payload: dict[str, Any], selected_source_id: str):
-    enabled = _source_enabled_from_payload(sources_payload or {"sources": []}, selected_source_id)
-    return gr.Checkbox(value=enabled, interactive=bool(selected_source_id))
-
-
-def toggle_source_enabled(user_id: str, notebook_id: str, source_id: str, enabled: bool):
+def apply_source_selection(
+    user_id: str,
+    notebook_id: str,
+    enabled_source_ids: list[str] | None,
+    sources_payload: dict[str, Any],
+):
     user_id = (user_id or "").strip()
-    if not user_id or not notebook_id or not source_id:
+    if not user_id or not notebook_id:
         payload = {"sources": []}
-        return gr.JSON(value=payload), gr.Dropdown(choices=[], value=None), gr.Checkbox(value=True, interactive=False), "Select a source first."
+        return gr.JSON(value=payload), payload, gr.CheckboxGroup(choices=[], value=[]), "Select a notebook first."
+    selected = set(enabled_source_ids or [])
     try:
-        _api_request(
-            "PATCH",
-            f"/api/notebooks/{notebook_id}/sources/{source_id}",
-            json_body={"user_id": user_id, "enabled": bool(enabled)},
-            headers=_auth_headers(user_id),
-        )
+        current_sources = (sources_payload or {}).get("sources", [])
+        changed = 0
+        for src in current_sources:
+            source_id = str(src.get("source_id", "")).strip()
+            if not source_id:
+                continue
+            current_enabled = bool(src.get("enabled", True))
+            target_enabled = source_id in selected
+            if current_enabled == target_enabled:
+                continue
+            _api_request(
+                "PATCH",
+                f"/api/notebooks/{notebook_id}/sources/{source_id}",
+                json_body={"user_id": user_id, "enabled": target_enabled},
+                headers=_auth_headers(user_id),
+            )
+            changed += 1
+
         sources_payload = _api_request(
             "GET",
             f"/api/notebooks/{notebook_id}/sources",
             params={"user_id": user_id},
             headers=_auth_headers(user_id),
         )
-        selector, checkbox = refresh_source_controls(sources_payload, source_id)
-        state = "enabled" if enabled else "disabled"
-        return gr.JSON(value=sources_payload), selector, checkbox, f"Source {state} for RAG."
+        source_group = refresh_source_controls(sources_payload)
+        return gr.JSON(value=sources_payload), sources_payload, source_group, f"Updated {changed} source setting(s)."
     except Exception as exc:
         payload = {"sources": []}
-        return gr.JSON(value=payload), gr.Dropdown(choices=[], value=None), gr.Checkbox(value=True, interactive=False), str(exc)
+        return gr.JSON(value=payload), payload, gr.CheckboxGroup(choices=[], value=[]), str(exc)
 
 
 def send_message(message: str, history, user_id: str, notebook_id: str):
@@ -562,9 +570,8 @@ with gr.Blocks(title="MemoriaLM") as demo:
             url_input = gr.Textbox(label="Web URL", placeholder="https://...")
             url_btn = gr.Button("Ingest URL")
             sources_json = gr.JSON(label="Ingested Sources", value={"sources": []})
-            source_selector = gr.Dropdown(label="Source for RAG toggle", choices=[], value=None)
-            source_enabled_checkbox = gr.Checkbox(label="Use selected source for RAG", value=True, interactive=False)
-            toggle_source_btn = gr.Button("Apply Source Toggle")
+            source_enabled_group = gr.CheckboxGroup(label="Enabled sources for RAG", choices=[], value=[], interactive=False)
+            toggle_source_btn = gr.Button("Apply Source Selection")
 
         with gr.Column(scale=2, min_width=420):
             with gr.Tabs():
@@ -604,8 +611,8 @@ with gr.Blocks(title="MemoriaLM") as demo:
         outputs=[sources_payload_state],
     ).then(
         refresh_source_controls,
-        inputs=[sources_payload_state, source_selector],
-        outputs=[source_selector, source_enabled_checkbox],
+        inputs=[sources_payload_state],
+        outputs=[source_enabled_group],
     )
     user_change_evt = user_id.change(
         load_notebooks,
@@ -618,8 +625,8 @@ with gr.Blocks(title="MemoriaLM") as demo:
         outputs=[sources_payload_state],
     ).then(
         refresh_source_controls,
-        inputs=[sources_payload_state, source_selector],
-        outputs=[source_selector, source_enabled_checkbox],
+        inputs=[sources_payload_state],
+        outputs=[source_enabled_group],
     )
 
     create_btn.click(
@@ -649,8 +656,8 @@ with gr.Blocks(title="MemoriaLM") as demo:
         outputs=[sources_payload_state],
     ).then(
         refresh_source_controls,
-        inputs=[sources_payload_state, source_selector],
-        outputs=[source_selector, source_enabled_checkbox],
+        inputs=[sources_payload_state],
+        outputs=[source_enabled_group],
     )
     notebook_selector.change(
         sync_artifacts_on_notebook_change,
@@ -698,8 +705,8 @@ with gr.Blocks(title="MemoriaLM") as demo:
         outputs=[sources_payload_state],
     ).then(
         refresh_source_controls,
-        inputs=[sources_payload_state, source_selector],
-        outputs=[source_selector, source_enabled_checkbox],
+        inputs=[sources_payload_state],
+        outputs=[source_enabled_group],
     )
     url_btn.click(
         ingest_url_source,
@@ -712,23 +719,14 @@ with gr.Blocks(title="MemoriaLM") as demo:
         outputs=[sources_payload_state],
     ).then(
         refresh_source_controls,
-        inputs=[sources_payload_state, source_selector],
-        outputs=[source_selector, source_enabled_checkbox],
+        inputs=[sources_payload_state],
+        outputs=[source_enabled_group],
     )
 
-    source_selector.change(
-        on_source_selected,
-        inputs=[sources_payload_state, source_selector],
-        outputs=[source_enabled_checkbox],
-    )
     toggle_source_btn.click(
-        toggle_source_enabled,
-        inputs=[user_id, notebook_selector, source_selector, source_enabled_checkbox],
-        outputs=[sources_json, source_selector, source_enabled_checkbox, status_box],
-    ).then(
-        lambda payload: payload,
-        inputs=[sources_json],
-        outputs=[sources_payload_state],
+        apply_source_selection,
+        inputs=[user_id, notebook_selector, source_enabled_group, sources_payload_state],
+        outputs=[sources_json, sources_payload_state, source_enabled_group, status_box],
     )
 
     refresh_artifacts_btn.click(
