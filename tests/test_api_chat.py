@@ -8,6 +8,7 @@ from backend.services.storage import NotebookStore
 
 
 client = TestClient(app)
+AUTH_U1 = {"X-User-Id": "u1"}
 
 
 def test_chat_endpoint_success_with_mock(monkeypatch, tmp_path):
@@ -35,7 +36,8 @@ def test_chat_endpoint_success_with_mock(monkeypatch, tmp_path):
 
     resp = client.post(
         f"/api/notebooks/{created.notebook_id}/chat",
-        json={"user_id": "u1", "message": "Hi", "top_k": 3},
+        json={"user_id": "u1", "message": "Hi", "top_k": 3, "retrieval_mode": "rerank"},
+        headers=AUTH_U1,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -61,7 +63,11 @@ def test_chat_history_endpoint_reads_jsonl(tmp_path):
         },
     )
 
-    resp = client.get(f"/api/notebooks/{created.notebook_id}/chat", params={"user_id": "u1"})
+    resp = client.get(
+        f"/api/notebooks/{created.notebook_id}/chat",
+        params={"user_id": "u1"},
+        headers=AUTH_U1,
+    )
     assert resp.status_code == 200
     payload = resp.json()
     assert len(payload["messages"]) == 2

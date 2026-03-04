@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, HttpUrl
 
@@ -46,6 +46,7 @@ class ChatRequest(BaseModel):
     user_id: str
     message: str
     top_k: int = 5
+    retrieval_mode: Literal["topk", "rerank"] = "topk"
 
 
 class CitationOut(BaseModel):

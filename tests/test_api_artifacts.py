@@ -12,6 +12,7 @@ from backend.services.storage import NotebookStore
 
 
 client = TestClient(app)
+AUTH_U1 = {"X-User-Id": "u1"}
 
 
 def _seed_source(store: NotebookStore, user_id: str, notebook_id: str, source_id: str = "src_demo") -> None:
@@ -41,17 +42,23 @@ def test_artifact_endpoints_generate_list_and_download(monkeypatch, tmp_path: Pa
     report = client.post(
         f"/api/notebooks/{nb.notebook_id}/artifacts/report",
         json={"user_id": "u1", "prompt": "Focus on definitions"},
+        headers=AUTH_U1,
     )
     assert report.status_code == 200
 
     podcast = client.post(
         f"/api/notebooks/{nb.notebook_id}/artifacts/podcast",
         json={"user_id": "u1"},
+        headers=AUTH_U1,
     )
     assert podcast.status_code == 200
     podcast_audio_name = Path(podcast.json()["audio_path"]).name
 
-    listed = client.get(f"/api/notebooks/{nb.notebook_id}/artifacts", params={"user_id": "u1"})
+    listed = client.get(
+        f"/api/notebooks/{nb.notebook_id}/artifacts",
+        params={"user_id": "u1"},
+        headers=AUTH_U1,
+    )
     assert listed.status_code == 200
     payload = listed.json()
     assert len(payload["reports"]) == 1
@@ -60,6 +67,7 @@ def test_artifact_endpoints_generate_list_and_download(monkeypatch, tmp_path: Pa
     dl = client.get(
         f"/api/notebooks/{nb.notebook_id}/artifacts/download",
         params={"user_id": "u1", "artifact_type": "podcast", "filename": podcast_audio_name},
+        headers=AUTH_U1,
     )
     assert dl.status_code == 200
     assert dl.content.startswith(b"ID3")

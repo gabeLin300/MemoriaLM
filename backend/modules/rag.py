@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List
 
 from backend.services.embeddings import embedding_service
@@ -51,12 +52,60 @@ def retrieve_notebook_chunks(
     notebook_id: str,
     query: str,
     top_k: int = 5,
+    retrieval_mode: str = "topk",
 ) -> List[Dict[str, Any]]:
     query_vecs = embedding_service.embed_texts([query])
     if not query_vecs:
         return []
     chroma = ChromaNotebookStore(store.chroma_dir(user_id, notebook_id))
-    return chroma.query(query_vecs[0], k=top_k)
+    mode = retrieval_mode.strip().lower()
+    if mode == "topk":
+        return chroma.query(query_vecs[0], k=top_k)
+    if mode == "rerank":
+        # Retrieve a wider pool first, then rerank using lexical overlap + vector signal.
+        pool_size = max(top_k * 4, top_k)
+        pool = chroma.query(query_vecs[0], k=pool_size)
+        return rerank_chunks(query=query, candidate_chunks=pool, top_k=top_k)
+    raise ValueError("Unsupported retrieval_mode")
+
+
+def _tokenize(text: str) -> set[str]:
+    return {tok for tok in re.findall(r"[a-zA-Z0-9]+", text.lower()) if tok}
+
+
+def _vector_relevance_from_distance(distance: Any) -> float:
+    if distance is None:
+        return 0.0
+    try:
+        dist = float(distance)
+    except (TypeError, ValueError):
+        return 0.0
+    # Chroma cosine distance: lower is better; map to 0..1 relevance-like value.
+    return 1.0 / (1.0 + max(0.0, dist))
+
+
+def rerank_chunks(
+    *,
+    query: str,
+    candidate_chunks: List[Dict[str, Any]],
+    top_k: int,
+    alpha: float = 0.65,
+) -> List[Dict[str, Any]]:
+    if not candidate_chunks:
+        return []
+    query_tokens = _tokenize(query)
+    ranked: List[tuple[float, Dict[str, Any]]] = []
+    for chunk in candidate_chunks:
+        text = str(chunk.get("text", ""))
+        chunk_tokens = _tokenize(text)
+        lexical = (len(query_tokens & chunk_tokens) / len(query_tokens)) if query_tokens else 0.0
+        vector_rel = _vector_relevance_from_distance(chunk.get("distance"))
+        score = (alpha * vector_rel) + ((1.0 - alpha) * lexical)
+        enriched = dict(chunk)
+        enriched["rerank_score"] = score
+        ranked.append((score, enriched))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in ranked[: max(1, top_k)]]
 
 
 def _citation_objects(retrieved_chunks: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -87,6 +136,7 @@ def answer_notebook_question(
     notebook_id: str,
     message: str,
     top_k: int = 5,
+    retrieval_mode: str = "topk",
 ) -> Dict[str, Any]:
     # Ensures the notebook exists and belongs to the user before retrieving.
     store.require_notebook_dir(user_id, notebook_id)
@@ -97,6 +147,7 @@ def answer_notebook_question(
         notebook_id=notebook_id,
         query=message,
         top_k=top_k,
+        retrieval_mode=retrieval_mode,
     )
     prompt = build_rag_prompt(message, retrieved_chunks)
     answer = llm_service.generate(prompt)

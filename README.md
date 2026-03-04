@@ -19,6 +19,7 @@ MemoriaLM is a full-stack RAG application inspired by NotebookLM. It allows auth
 - Upload documents (`.pdf`, `.pptx`, `.txt`) and URLs
 - Chat with uploaded content using RAG
 - Generate study artifacts (reports, quizzes, podcasts)
+- Retrieval modes for comparison: `topk` and `rerank`
 
 ### Architecture
 - **Frontend**: Gradio UI (frontend/app.py)
@@ -78,3 +79,9 @@ Run all tests:
 ```sh
 pytest tests/
 ```
+
+## RAG Technique Comparison
+See `docs/rag_techniques.md` for:
+- implemented retrieval modes (`topk` vs `rerank`)
+- benchmark command (`scripts/rag_benchmark.py`)
+- results table template for the project deliverable

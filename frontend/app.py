@@ -80,7 +80,17 @@ def _maybe_start_local_backend() -> None:
         time.sleep(0.2)
 
 
-def _api_request(method: str, path: str, *, params=None, json_body=None, files=None, data=None, timeout: int = 60):
+def _api_request(
+    method: str,
+    path: str,
+    *,
+    params=None,
+    json_body=None,
+    files=None,
+    data=None,
+    headers=None,
+    timeout: int = 60,
+):
     url = f"{BACKEND_URL}{path}"
     try:
         resp = requests.request(
@@ -90,6 +100,7 @@ def _api_request(method: str, path: str, *, params=None, json_body=None, files=N
             json=json_body,
             files=files,
             data=data,
+            headers=headers,
             timeout=timeout,
         )
     except requests.RequestException as exc:
@@ -107,6 +118,11 @@ def _api_request(method: str, path: str, *, params=None, json_body=None, files=N
     if resp.content:
         return resp.json()
     return None
+
+
+def _auth_headers(user_id: str | None) -> dict[str, str]:
+    uid = (user_id or "").strip()
+    return {"X-User-Id": uid} if uid else {}
 
 
 def _format_notebook_choices(items: list[dict[str, Any]]):
@@ -153,15 +169,25 @@ def load_notebooks(user_id: str):
     if not user_id:
         return gr.Dropdown(choices=[], value=None), [], gr.JSON(value={"sources": []}), [], "Enter a user ID."
     try:
-        items = _api_request("GET", "/api/notebooks/", params={"user_id": user_id})
+        items = _api_request("GET", "/api/notebooks/", params={"user_id": user_id}, headers=_auth_headers(user_id))
         choices = _format_notebook_choices(items)
         selected = choices[0][1] if choices else None
         chat_history = []
         sources_payload = {"sources": []}
         if selected:
-            chat = _api_request("GET", f"/api/notebooks/{selected}/chat", params={"user_id": user_id})
+            chat = _api_request(
+                "GET",
+                f"/api/notebooks/{selected}/chat",
+                params={"user_id": user_id},
+                headers=_auth_headers(user_id),
+            )
             chat_history = _messages_to_chatbot(chat.get("messages", []))
-            sources_payload = _api_request("GET", f"/api/notebooks/{selected}/sources", params={"user_id": user_id})
+            sources_payload = _api_request(
+                "GET",
+                f"/api/notebooks/{selected}/sources",
+                params={"user_id": user_id},
+                headers=_auth_headers(user_id),
+            )
         return gr.Dropdown(choices=choices, value=selected), items, gr.JSON(value=sources_payload), chat_history, ""
     except Exception as exc:
         return gr.Dropdown(choices=[], value=None), [], gr.JSON(value={"sources": []}), [], str(exc)
@@ -173,7 +199,12 @@ def create_notebook(user_id: str, notebook_name: str):
     if not user_id:
         return gr.Dropdown(choices=[], value=None), [], "", "Enter a user ID first."
     try:
-        _api_request("POST", "/api/notebooks/", json_body={"user_id": user_id, "name": notebook_name})
+        _api_request(
+            "POST",
+            "/api/notebooks/",
+            json_body={"user_id": user_id, "name": notebook_name},
+            headers=_auth_headers(user_id),
+        )
         dropdown, notebooks, _sources, _chat, _status = load_notebooks(user_id)
         return dropdown, notebooks, "", f"Created notebook '{notebook_name}'."
     except Exception as exc:
@@ -190,8 +221,9 @@ def rename_notebook(user_id: str, notebook_id: str, notebook_name: str):
             "PATCH",
             f"/api/notebooks/{notebook_id}",
             json_body={"user_id": user_id, "name": notebook_name},
+            headers=_auth_headers(user_id),
         )
-        items = _api_request("GET", "/api/notebooks/", params={"user_id": user_id})
+        items = _api_request("GET", "/api/notebooks/", params={"user_id": user_id}, headers=_auth_headers(user_id))
         choices = _format_notebook_choices(items)
         return gr.Dropdown(choices=choices, value=notebook_id), items, f"Renamed notebook to '{notebook_name}'."
     except Exception as exc:
@@ -203,7 +235,12 @@ def delete_notebook(user_id: str, notebook_id: str):
     if not user_id or not notebook_id:
         return gr.Dropdown(choices=[], value=None), [], gr.JSON(value={"sources": []}), [], "Select a notebook to delete."
     try:
-        _api_request("DELETE", f"/api/notebooks/{notebook_id}", params={"user_id": user_id})
+        _api_request(
+            "DELETE",
+            f"/api/notebooks/{notebook_id}",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
         dropdown, notebooks, sources_json, chat_history, _ = load_notebooks(user_id)
         return dropdown, notebooks, sources_json, chat_history, "Deleted notebook."
     except Exception as exc:
@@ -215,8 +252,18 @@ def on_notebook_change(user_id: str, notebook_id: str):
     if not user_id or not notebook_id:
         return gr.JSON(value={"sources": []}), [], ""
     try:
-        sources_payload = _api_request("GET", f"/api/notebooks/{notebook_id}/sources", params={"user_id": user_id})
-        chat = _api_request("GET", f"/api/notebooks/{notebook_id}/chat", params={"user_id": user_id})
+        sources_payload = _api_request(
+            "GET",
+            f"/api/notebooks/{notebook_id}/sources",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
+        chat = _api_request(
+            "GET",
+            f"/api/notebooks/{notebook_id}/chat",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
         return gr.JSON(value=sources_payload), _messages_to_chatbot(chat.get("messages", [])), ""
     except Exception as exc:
         return gr.JSON(value={"sources": []}), [], str(exc)
@@ -233,9 +280,15 @@ def upload_source(user_id: str, notebook_id: str, file_path: str):
                 f"/api/notebooks/{notebook_id}/sources/upload",
                 data={"user_id": user_id},
                 files={"file": (os.path.basename(file_path), f)},
+                headers=_auth_headers(user_id),
                 timeout=180,
             )
-        sources_payload = _api_request("GET", f"/api/notebooks/{notebook_id}/sources", params={"user_id": user_id})
+        sources_payload = _api_request(
+            "GET",
+            f"/api/notebooks/{notebook_id}/sources",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
         return gr.JSON(value=sources_payload), f"Ingested file: {payload.get('source_name', os.path.basename(file_path))}"
     except Exception as exc:
         return gr.JSON(value={"sources": []}), str(exc)
@@ -251,9 +304,15 @@ def ingest_url_source(user_id: str, notebook_id: str, url: str):
             "POST",
             f"/api/notebooks/{notebook_id}/sources/url",
             json_body={"user_id": user_id, "url": url},
+            headers=_auth_headers(user_id),
             timeout=180,
         )
-        sources_payload = _api_request("GET", f"/api/notebooks/{notebook_id}/sources", params={"user_id": user_id})
+        sources_payload = _api_request(
+            "GET",
+            f"/api/notebooks/{notebook_id}/sources",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
         return gr.JSON(value=sources_payload), f"Ingested URL: {payload.get('source_name', url)}"
     except Exception as exc:
         return gr.JSON(value={"sources": []}), str(exc)
@@ -272,6 +331,7 @@ def send_message(message: str, history, user_id: str, notebook_id: str):
             "POST",
             f"/api/notebooks/{notebook_id}/chat",
             json_body={"user_id": user_id, "message": message, "top_k": 5},
+            headers=_auth_headers(user_id),
             timeout=180,
         )
         assistant_text = str(resp.get("answer", "")) + _format_citations(resp.get("citations"))
@@ -313,7 +373,12 @@ def refresh_artifacts(user_id: str, notebook_id: str):
         payload = _empty_artifacts_payload()
         return gr.JSON(value=payload), None, None, None, None, "Select a notebook first."
     try:
-        payload = _api_request("GET", f"/api/notebooks/{notebook_id}/artifacts", params={"user_id": user_id})
+        payload = _api_request(
+            "GET",
+            f"/api/notebooks/{notebook_id}/artifacts",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
         report, quiz, transcript, audio = _artifact_outputs_from_payload(payload)
         return gr.JSON(value=payload), report, quiz, transcript, audio, ""
     except Exception as exc:
@@ -336,6 +401,7 @@ def generate_report_artifact(user_id: str, notebook_id: str, artifact_prompt: st
             "POST",
             f"/api/notebooks/{notebook_id}/artifacts/report",
             json_body={"user_id": user_id, "prompt": (artifact_prompt or "").strip() or None},
+            headers=_auth_headers(user_id),
             timeout=180,
         )
         payload_json, report, quiz, transcript, audio, _ = refresh_artifacts(user_id, notebook_id)
@@ -359,6 +425,7 @@ def generate_quiz_artifact(user_id: str, notebook_id: str, artifact_prompt: str,
                 "prompt": (artifact_prompt or "").strip() or None,
                 "num_questions": int(num_questions),
             },
+            headers=_auth_headers(user_id),
             timeout=180,
         )
         payload_json, report, quiz, transcript, audio, _ = refresh_artifacts(user_id, notebook_id)
@@ -378,6 +445,7 @@ def generate_podcast_artifact(user_id: str, notebook_id: str, artifact_prompt: s
             "POST",
             f"/api/notebooks/{notebook_id}/artifacts/podcast",
             json_body={"user_id": user_id, "prompt": (artifact_prompt or "").strip() or None},
+            headers=_auth_headers(user_id),
             timeout=240,
         )
         payload_json, report, quiz, transcript, audio, _ = refresh_artifacts(user_id, notebook_id)

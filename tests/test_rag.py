@@ -59,3 +59,27 @@ def test_answer_notebook_question_persists_messages(monkeypatch, tmp_path):
     assert len(messages) == 2
     assert messages[0]["role"] == "user"
     assert messages[1]["role"] == "assistant"
+
+
+def test_rerank_chunks_prefers_lexically_relevant_chunk():
+    candidates = [
+        {
+            "chunk_id": "a",
+            "text": "general overview and intro",
+            "metadata": {},
+            "distance": 0.15,
+        },
+        {
+            "chunk_id": "b",
+            "text": "transformer attention heads and query key value details",
+            "metadata": {},
+            "distance": 0.20,
+        },
+    ]
+    reranked = rag.rerank_chunks(
+        query="explain transformer attention",
+        candidate_chunks=candidates,
+        top_k=1,
+    )
+    assert len(reranked) == 1
+    assert reranked[0]["chunk_id"] == "b"

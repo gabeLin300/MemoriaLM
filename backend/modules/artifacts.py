@@ -1,17 +1,12 @@
 import audioop
 import json
-import math
-import os
 import re
 import wave
-import torch
 import io
-import soundfile as sf
-from transformers import AutoTokenizer, VitsModel
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from backend.models.schemas import (
     ArtifactFileOut,
@@ -27,8 +22,35 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_vits_model = VitsModel.from_pretrained("facebook/mms-tts-eng")
-_tokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+try:
+    from transformers import AutoTokenizer, VitsModel
+except ImportError:
+    AutoTokenizer = None
+    VitsModel = None
+
+_vits_model = None
+_tokenizer = None
+
+
+def _get_tts_model():
+    global _vits_model, _tokenizer
+    if _vits_model is not None and _tokenizer is not None:
+        return _vits_model, _tokenizer
+    if torch is None or sf is None or AutoTokenizer is None or VitsModel is None:
+        raise RuntimeError("TTS dependencies are not installed")
+    _vits_model = VitsModel.from_pretrained("facebook/mms-tts-eng")
+    _tokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
+    return _vits_model, _tokenizer
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -211,11 +233,12 @@ def clean_transcript_for_tts(transcript: str) -> str:
 
 def _synthesize_podcast_mp3(transcript_text: str) -> bytes:
     tts_text = clean_transcript_for_tts(transcript_text)[:1800]
+    model, tokenizer = _get_tts_model()
 
-    inputs = _tokenizer(tts_text, return_tensors="pt")
+    inputs = tokenizer(tts_text, return_tensors="pt")
 
     with torch.no_grad():
-        waveform = _vits_model(**inputs).waveform.squeeze().cpu().numpy()
+        waveform = model(**inputs).waveform.squeeze().cpu().numpy()
 
     wav_buffer = io.BytesIO()
     sf.write(wav_buffer, waveform, 16000, format="WAV")
