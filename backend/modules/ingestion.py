@@ -216,6 +216,7 @@ def _write_source_files(
         "source_id": source_id,
         "source_name": source_name,
         "source_type": source_type,
+        "enabled": True,
         "raw_path": raw_rel,
         "extracted_path": str(extracted_path.as_posix()),
         "chunk_count": len(chunks),
@@ -329,7 +330,37 @@ def list_ingested_sources(store: NotebookStore, *, user_id: str, notebook_id: st
     for meta_path in sorted(extracted_dir.glob("*.meta.json")):
         try:
             payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            if "enabled" not in payload:
+                payload["enabled"] = True
             items.append(SourceOut(**payload))
         except Exception:
             continue
     return items
+
+
+def set_source_enabled(
+    store: NotebookStore,
+    *,
+    user_id: str,
+    notebook_id: str,
+    source_id: str,
+    enabled: bool,
+) -> SourceOut:
+    extracted_dir = store.files_extracted_dir(user_id, notebook_id)
+    meta_path = extracted_dir / f"{source_id}.meta.json"
+    if not meta_path.exists():
+        raise FileNotFoundError("Source not found")
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    payload["enabled"] = bool(enabled)
+    meta_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if "enabled" not in payload:
+        payload["enabled"] = bool(enabled)
+    return SourceOut(**payload)
+
+
+def enabled_source_ids(store: NotebookStore, *, user_id: str, notebook_id: str) -> set[str]:
+    ids: set[str] = set()
+    for item in list_ingested_sources(store, user_id=user_id, notebook_id=notebook_id):
+        if item.enabled:
+            ids.add(item.source_id)
+    return ids

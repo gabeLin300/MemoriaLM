@@ -318,6 +318,70 @@ def ingest_url_source(user_id: str, notebook_id: str, url: str):
         return gr.JSON(value={"sources": []}), str(exc)
 
 
+def _source_choices_from_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    sources = payload.get("sources", []) if isinstance(payload, dict) else []
+    choices: list[tuple[str, str]] = []
+    for src in sources:
+        source_id = str(src.get("source_id", ""))
+        if not source_id:
+            continue
+        enabled = bool(src.get("enabled", True))
+        marker = "ON" if enabled else "OFF"
+        name = str(src.get("source_name", source_id))
+        choices.append((f"{marker} | {name} [{source_id[:8]}]", source_id))
+    return choices
+
+
+def _source_enabled_from_payload(payload: dict[str, Any], source_id: str | None) -> bool:
+    if not source_id or not isinstance(payload, dict):
+        return True
+    for src in payload.get("sources", []):
+        if str(src.get("source_id", "")) == source_id:
+            return bool(src.get("enabled", True))
+    return True
+
+
+def refresh_source_controls(sources_payload: dict[str, Any], selected_source_id: str | None):
+    choices = _source_choices_from_payload(sources_payload or {"sources": []})
+    if not choices:
+        return gr.Dropdown(choices=[], value=None), gr.Checkbox(value=True, interactive=False)
+    values = [v for _label, v in choices]
+    value = selected_source_id if selected_source_id in values else values[0]
+    enabled = _source_enabled_from_payload(sources_payload, value)
+    return gr.Dropdown(choices=choices, value=value), gr.Checkbox(value=enabled, interactive=True)
+
+
+def on_source_selected(sources_payload: dict[str, Any], selected_source_id: str):
+    enabled = _source_enabled_from_payload(sources_payload or {"sources": []}, selected_source_id)
+    return gr.Checkbox(value=enabled, interactive=bool(selected_source_id))
+
+
+def toggle_source_enabled(user_id: str, notebook_id: str, source_id: str, enabled: bool):
+    user_id = (user_id or "").strip()
+    if not user_id or not notebook_id or not source_id:
+        payload = {"sources": []}
+        return gr.JSON(value=payload), gr.Dropdown(choices=[], value=None), gr.Checkbox(value=True, interactive=False), "Select a source first."
+    try:
+        _api_request(
+            "PATCH",
+            f"/api/notebooks/{notebook_id}/sources/{source_id}",
+            json_body={"user_id": user_id, "enabled": bool(enabled)},
+            headers=_auth_headers(user_id),
+        )
+        sources_payload = _api_request(
+            "GET",
+            f"/api/notebooks/{notebook_id}/sources",
+            params={"user_id": user_id},
+            headers=_auth_headers(user_id),
+        )
+        selector, checkbox = refresh_source_controls(sources_payload, source_id)
+        state = "enabled" if enabled else "disabled"
+        return gr.JSON(value=sources_payload), selector, checkbox, f"Source {state} for RAG."
+    except Exception as exc:
+        payload = {"sources": []}
+        return gr.JSON(value=payload), gr.Dropdown(choices=[], value=None), gr.Checkbox(value=True, interactive=False), str(exc)
+
+
 def send_message(message: str, history, user_id: str, notebook_id: str):
     message = (message or "").strip()
     user_id = (user_id or "").strip()
@@ -462,6 +526,7 @@ def greet_user(profile: gr.OAuthProfile | None) -> tuple[str | None, str]:
 
 with gr.Blocks(title="MemoriaLM") as demo:
     notebook_state = gr.State([])
+    sources_payload_state = gr.State({"sources": []})
 
     gr.Markdown("# MemoriaLM")
     gr.Markdown("NotebookLM-style RAG app (Phase 4 UI wired to backend APIs)")
@@ -497,6 +562,9 @@ with gr.Blocks(title="MemoriaLM") as demo:
             url_input = gr.Textbox(label="Web URL", placeholder="https://...")
             url_btn = gr.Button("Ingest URL")
             sources_json = gr.JSON(label="Ingested Sources", value={"sources": []})
+            source_selector = gr.Dropdown(label="Source for RAG toggle", choices=[], value=None)
+            source_enabled_checkbox = gr.Checkbox(label="Use selected source for RAG", value=True, interactive=False)
+            toggle_source_btn = gr.Button("Apply Source Toggle")
 
         with gr.Column(scale=2, min_width=420):
             with gr.Tabs():
@@ -530,10 +598,28 @@ with gr.Blocks(title="MemoriaLM") as demo:
         inputs=[user_id],
         outputs=[notebook_selector, notebook_state, sources_json, chatbot, status_box],
     )
+    refresh_evt.then(
+        lambda payload: payload,
+        inputs=[sources_json],
+        outputs=[sources_payload_state],
+    ).then(
+        refresh_source_controls,
+        inputs=[sources_payload_state, source_selector],
+        outputs=[source_selector, source_enabled_checkbox],
+    )
     user_change_evt = user_id.change(
         load_notebooks,
         inputs=[user_id],
         outputs=[notebook_selector, notebook_state, sources_json, chatbot, status_box],
+    )
+    user_change_evt.then(
+        lambda payload: payload,
+        inputs=[sources_json],
+        outputs=[sources_payload_state],
+    ).then(
+        refresh_source_controls,
+        inputs=[sources_payload_state, source_selector],
+        outputs=[source_selector, source_enabled_checkbox],
     )
 
     create_btn.click(
@@ -556,6 +642,15 @@ with gr.Blocks(title="MemoriaLM") as demo:
         on_notebook_change,
         inputs=[user_id, notebook_selector],
         outputs=[sources_json, chatbot, status_box],
+    )
+    notebook_selector.change(
+        lambda payload: payload,
+        inputs=[sources_json],
+        outputs=[sources_payload_state],
+    ).then(
+        refresh_source_controls,
+        inputs=[sources_payload_state, source_selector],
+        outputs=[source_selector, source_enabled_checkbox],
     )
     notebook_selector.change(
         sync_artifacts_on_notebook_change,
@@ -597,10 +692,43 @@ with gr.Blocks(title="MemoriaLM") as demo:
         inputs=[user_id, notebook_selector, upload_file],
         outputs=[sources_json, status_box],
     )
+    upload_btn.click(
+        lambda payload: payload,
+        inputs=[sources_json],
+        outputs=[sources_payload_state],
+    ).then(
+        refresh_source_controls,
+        inputs=[sources_payload_state, source_selector],
+        outputs=[source_selector, source_enabled_checkbox],
+    )
     url_btn.click(
         ingest_url_source,
         inputs=[user_id, notebook_selector, url_input],
         outputs=[sources_json, status_box],
+    )
+    url_btn.click(
+        lambda payload: payload,
+        inputs=[sources_json],
+        outputs=[sources_payload_state],
+    ).then(
+        refresh_source_controls,
+        inputs=[sources_payload_state, source_selector],
+        outputs=[source_selector, source_enabled_checkbox],
+    )
+
+    source_selector.change(
+        on_source_selected,
+        inputs=[sources_payload_state, source_selector],
+        outputs=[source_enabled_checkbox],
+    )
+    toggle_source_btn.click(
+        toggle_source_enabled,
+        inputs=[user_id, notebook_selector, source_selector, source_enabled_checkbox],
+        outputs=[sources_json, source_selector, source_enabled_checkbox, status_box],
+    ).then(
+        lambda payload: payload,
+        inputs=[sources_json],
+        outputs=[sources_payload_state],
     )
 
     refresh_artifacts_btn.click(

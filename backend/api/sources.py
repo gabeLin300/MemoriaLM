@@ -2,8 +2,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from backend.models.schemas import SourceListOut, SourceOut, UrlIngestRequest
-from backend.modules.ingestion import ingest_uploaded_bytes, ingest_url, list_ingested_sources
+from backend.models.schemas import SourceListOut, SourceOut, SourceToggleRequest, UrlIngestRequest
+from backend.modules.ingestion import ingest_uploaded_bytes, ingest_url, list_ingested_sources, set_source_enabled
 from backend.services.auth import User, enforce_user_match, get_current_user
 from backend.services.storage import NotebookStore
 
@@ -68,3 +68,25 @@ async def upload_source_file(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"File ingestion failed: {exc}") from exc
+
+
+@router.patch("/{notebook_id}/sources/{source_id}", response_model=SourceOut)
+def toggle_source(
+    notebook_id: str,
+    source_id: str,
+    payload: SourceToggleRequest,
+    current_user: User = Depends(get_current_user),
+) -> SourceOut:
+    try:
+        enforce_user_match(current_user, payload.user_id)
+        return set_source_enabled(
+            store,
+            user_id=current_user.user_id,
+            notebook_id=notebook_id,
+            source_id=source_id,
+            enabled=payload.enabled,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Source not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

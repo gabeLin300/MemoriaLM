@@ -4,11 +4,13 @@ from types import SimpleNamespace
 import pytest
 
 from backend.modules.ingestion import (
+    enabled_source_ids,
     chunk_text,
     extract_file_segments,
     fetch_url_text,
     format_extracted_text,
     ingest_uploaded_bytes,
+    set_source_enabled,
 )
 from backend.models.schemas import NotebookCreate
 from backend.services.storage import NotebookStore
@@ -89,3 +91,33 @@ def test_ingest_uploaded_bytes_rejects_empty_text(tmp_path: Path):
             filename="empty.txt",
             content=b"",
         )
+
+
+def test_set_source_enabled_and_enabled_source_ids(monkeypatch, tmp_path: Path):
+    store = NotebookStore(base_dir=str(tmp_path))
+    nb = store.create(NotebookCreate(user_id="u1", name="N1"))
+    monkeypatch.setattr("backend.modules.ingestion.embedding_service.embed_texts", lambda texts: [[0.0] * 8 for _ in texts])
+    monkeypatch.setattr("backend.modules.ingestion.ChromaNotebookStore.upsert_chunks", lambda self, chunks, embeddings: None)
+
+    ingested = ingest_uploaded_bytes(
+        store,
+        user_id="u1",
+        notebook_id=nb.notebook_id,
+        filename="a.txt",
+        content=b"hello world",
+    )
+
+    ids_before = enabled_source_ids(store, user_id="u1", notebook_id=nb.notebook_id)
+    assert ingested.source_id in ids_before
+
+    updated = set_source_enabled(
+        store,
+        user_id="u1",
+        notebook_id=nb.notebook_id,
+        source_id=ingested.source_id,
+        enabled=False,
+    )
+    assert updated.enabled is False
+
+    ids_after = enabled_source_ids(store, user_id="u1", notebook_id=nb.notebook_id)
+    assert ingested.source_id not in ids_after

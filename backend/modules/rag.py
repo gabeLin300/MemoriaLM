@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from backend.services.embeddings import embedding_service
 from backend.services.llm import llm_service
+from backend.modules.ingestion import enabled_source_ids
 from backend.services.storage import NotebookStore
 from backend.services.vector_store import ChromaNotebookStore
 
@@ -57,16 +58,31 @@ def retrieve_notebook_chunks(
     query_vecs = embedding_service.embed_texts([query])
     if not query_vecs:
         return []
+    enabled_ids = enabled_source_ids(store, user_id=user_id, notebook_id=notebook_id)
+    if not enabled_ids:
+        return []
     chroma = ChromaNotebookStore(store.chroma_dir(user_id, notebook_id))
     mode = retrieval_mode.strip().lower()
     if mode == "topk":
-        return chroma.query(query_vecs[0], k=top_k)
+        rows = chroma.query(query_vecs[0], k=max(top_k * 4, top_k))
+        return _filter_enabled_rows(rows, enabled_ids)[: max(1, top_k)]
     if mode == "rerank":
         # Retrieve a wider pool first, then rerank using lexical overlap + vector signal.
         pool_size = max(top_k * 4, top_k)
-        pool = chroma.query(query_vecs[0], k=pool_size)
+        pool = _filter_enabled_rows(chroma.query(query_vecs[0], k=pool_size), enabled_ids)
         return rerank_chunks(query=query, candidate_chunks=pool, top_k=top_k)
     raise ValueError("Unsupported retrieval_mode")
+
+
+def _filter_enabled_rows(rows: List[Dict[str, Any]], enabled_ids: set[str]) -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        source_id = str((row.get("metadata") or {}).get("source_id", ""))
+        if source_id in enabled_ids:
+            out.append(row)
+    return out
 
 
 def _tokenize(text: str) -> set[str]:

@@ -31,6 +31,7 @@ class SourceOut(BaseModel):
     source_id: str
     source_name: str
     source_type: str
+    enabled: bool = True
     raw_path: Optional[str] = None
     extracted_path: str
     chunk_count: int
@@ -40,6 +41,11 @@ class SourceOut(BaseModel):
 
 class SourceListOut(BaseModel):
     sources: List[SourceOut]
+
+
+class SourceToggleRequest(BaseModel):
+    user_id: str
+    enabled: bool
 
 
 class ChatRequest(BaseModel):
