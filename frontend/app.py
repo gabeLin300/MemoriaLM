@@ -591,7 +591,7 @@ with gr.Blocks(title="MemoriaLM") as demo:
                     delete_btn = gr.Button("Delete")
     
             gr.Markdown("## Sources")
-            upload_file = gr.File(label="Upload PDF/PPTX/TXT", type="filepath")
+            upload_file = gr.File(label="Upload PDF/PPTX/TXT/CSV", type="filepath")
             upload_btn = gr.Button("Ingest File")
             url_input = gr.Textbox(label="Web URL", placeholder="https://...")
             url_btn = gr.Button("Ingest URL")

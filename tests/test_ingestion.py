@@ -38,6 +38,16 @@ def test_extract_txt_segments(tmp_path: Path):
     assert "hello" in segments[0]["text"]
 
 
+def test_extract_csv_segments(tmp_path: Path):
+    p = tmp_path / "sample.csv"
+    p.write_text("name,score\nalice,95\nbob,88\n", encoding="utf-8")
+    source_type, segments = extract_file_segments(p)
+    assert source_type == "csv"
+    assert len(segments) == 3
+    assert "col1: name" in segments[0]["text"]
+    assert "col2: 95" in segments[1]["text"]
+
+
 def test_fetch_url_text(monkeypatch):
     pytest.importorskip("bs4")
     class DummyResponse:

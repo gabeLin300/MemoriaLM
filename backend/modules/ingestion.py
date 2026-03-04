@@ -1,5 +1,6 @@
 import hashlib
 import json
+import csv
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +23,7 @@ from backend.services.storage import NotebookStore
 from backend.services.vector_store import ChromaNotebookStore
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".pptx", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".pptx", ".txt", ".csv"}
 
 
 def _now() -> str:
@@ -94,6 +95,19 @@ def _read_txt(path: Path) -> List[Dict[str, str]]:
     return [{"location": "full text", "text": text}]
 
 
+def _read_csv(path: Path) -> List[Dict[str, str]]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    rows = list(csv.reader(text.splitlines()))
+    segments: List[Dict[str, str]] = []
+    for idx, row in enumerate(rows, start=1):
+        cells = [cell.strip() for cell in row if cell and cell.strip()]
+        if not cells:
+            continue
+        row_text = "; ".join([f"col{col_idx + 1}: {cell}" for col_idx, cell in enumerate(cells)])
+        segments.append({"location": f"row {idx}", "text": row_text})
+    return segments
+
+
 def _read_pdf(path: Path) -> List[Dict[str, str]]:
     from pypdf import PdfReader
 
@@ -127,6 +141,8 @@ def extract_file_segments(path: Path) -> tuple[str, List[Dict[str, str]]]:
     suffix = path.suffix.lower()
     if suffix == ".txt":
         return "txt", _read_txt(path)
+    if suffix == ".csv":
+        return "csv", _read_csv(path)
     if suffix == ".pdf":
         return "pdf", _read_pdf(path)
     if suffix == ".pptx":

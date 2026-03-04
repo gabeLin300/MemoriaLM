@@ -1,6 +1,7 @@
 from backend.models.schemas import NotebookCreate
 from backend.modules import rag
 from backend.services.storage import NotebookStore
+import json
 
 
 def test_build_rag_prompt_includes_citation_format():
@@ -83,3 +84,40 @@ def test_rerank_chunks_prefers_lexically_relevant_chunk():
     )
     assert len(reranked) == 1
     assert reranked[0]["chunk_id"] == "b"
+
+
+def test_csv_row_lookup_returns_exact_row(monkeypatch, tmp_path):
+    store = NotebookStore(base_dir=str(tmp_path))
+    nb = store.create(NotebookCreate(user_id="u1", name="CSV Notebook"))
+
+    extracted_dir = store.files_extracted_dir("u1", nb.notebook_id)
+    source_id = "src_csv_1"
+    (extracted_dir / f"{source_id}.meta.json").write_text(
+        json.dumps(
+            {
+                "source_id": source_id,
+                "source_name": "industry.csv",
+                "source_type": "csv",
+                "enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (extracted_dir / f"{source_id}.txt").write_text(
+        "[row 20]\ncol1: A; col2: 100\n\n[row 21]\ncol1: B; col2: 200\n\n[row 22]\ncol1: C; col2: 300\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(rag.llm_service, "generate", lambda prompt: (_ for _ in ()).throw(AssertionError("LLM should not be called for direct row lookup")))
+
+    result = rag.answer_notebook_question(
+        store,
+        user_id="u1",
+        notebook_id=nb.notebook_id,
+        message="what value is in row 21",
+        top_k=5,
+    )
+
+    assert "row 21" in result["answer"].lower()
+    assert "col2: 200" in result["answer"]
+    assert result["citations"][0]["location"] == "row 21"

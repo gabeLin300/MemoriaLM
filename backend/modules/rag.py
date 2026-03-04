@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import re
+import json
 from typing import Any, Dict, List
 
 from backend.services.embeddings import embedding_service
@@ -156,6 +157,31 @@ def answer_notebook_question(
 ) -> Dict[str, Any]:
     # Ensures the notebook exists and belongs to the user before retrieving.
     store.require_notebook_dir(user_id, notebook_id)
+    created_at = _now()
+
+    csv_lookup = _csv_row_lookup(store, user_id=user_id, notebook_id=notebook_id, message=message)
+    if csv_lookup is not None:
+        store.append_chat_message(
+            user_id,
+            notebook_id,
+            {
+                "role": "user",
+                "content": message,
+                "created_at": created_at,
+            },
+        )
+        store.append_chat_message(
+            user_id,
+            notebook_id,
+            {
+                "role": "assistant",
+                "content": csv_lookup["answer"],
+                "created_at": created_at,
+                "citations": csv_lookup["citations"],
+                "used_chunks": csv_lookup["used_chunks"],
+            },
+        )
+        return csv_lookup
 
     retrieved_chunks = retrieve_notebook_chunks(
         store,
@@ -168,7 +194,6 @@ def answer_notebook_question(
     prompt = build_rag_prompt(message, retrieved_chunks)
     answer = llm_service.generate(prompt)
     citations = _citation_objects(retrieved_chunks)
-    created_at = _now()
 
     store.append_chat_message(
         user_id,
@@ -195,6 +220,71 @@ def answer_notebook_question(
         "answer": answer,
         "citations": citations,
         "used_chunks": len(retrieved_chunks),
+    }
+
+
+def _csv_row_lookup(
+    store: NotebookStore,
+    *,
+    user_id: str,
+    notebook_id: str,
+    message: str,
+) -> Dict[str, Any] | None:
+    match = re.search(r"\brow\s+(\d+)\b", message.lower())
+    if not match:
+        return None
+    requested_row = int(match.group(1))
+
+    extracted_dir = store.files_extracted_dir(user_id, notebook_id)
+    citations: List[Dict[str, str]] = []
+    row_values: List[str] = []
+
+    for meta_path in sorted(extracted_dir.glob("*.meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        if str(meta.get("source_type", "")).lower() != "csv":
+            continue
+        if not bool(meta.get("enabled", True)):
+            continue
+
+        source_id = str(meta.get("source_id", ""))
+        source_name = str(meta.get("source_name", "unknown"))
+        extracted_path = extracted_dir / f"{source_id}.txt"
+        if not extracted_path.exists():
+            continue
+        text = extracted_path.read_text(encoding="utf-8", errors="ignore")
+
+        row_pattern = re.compile(
+            rf"\[row {requested_row}\]\n(?P<value>.*?)(?:\n\n\[row \d+\]\n|\Z)",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        row_match = row_pattern.search(text)
+        if not row_match:
+            continue
+        value = row_match.group("value").strip()
+        if not value:
+            continue
+        row_values.append(f"{source_name}: {value}")
+        citations.append(
+            {
+                "source_name": source_name,
+                "source_type": "csv",
+                "location": f"row {requested_row}",
+                "chunk_id": f"{source_id}:row-{requested_row}",
+            }
+        )
+
+    if not row_values:
+        return None
+
+    answer_lines = [f"Row {requested_row} value(s):"] + [f"- {v}" for v in row_values]
+    return {
+        "answer": "\n".join(answer_lines),
+        "citations": citations,
+        "used_chunks": len(citations),
     }
 
 
