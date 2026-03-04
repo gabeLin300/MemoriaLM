@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 
 from backend.models.schemas import ArtifactGenerateOut, ArtifactGenerateRequest, ArtifactListOut
 from backend.modules.artifacts import (
+    generate_flashcards,
     generate_podcast,
     generate_quiz,
     generate_report,
@@ -74,6 +75,29 @@ def create_quiz_artifact(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Quiz generation failed: {exc}") from exc
+
+
+@router.post("/{notebook_id}/artifacts/flashcards", response_model=ArtifactGenerateOut)
+def create_flashcards_artifact(
+    notebook_id: str,
+    payload: ArtifactGenerateRequest,
+    current_user: User = Depends(get_current_user),
+) -> ArtifactGenerateOut:
+    try:
+        enforce_user_match(current_user, payload.user_id)
+        return generate_flashcards(
+            store,
+            user_id=current_user.user_id,
+            notebook_id=notebook_id,
+            prompt=payload.prompt,
+            num_questions=payload.num_questions,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Flashcards generation failed: {exc}") from exc
 
 
 @router.post("/{notebook_id}/artifacts/podcast", response_model=ArtifactGenerateOut)

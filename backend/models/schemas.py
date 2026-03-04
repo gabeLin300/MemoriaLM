@@ -99,6 +99,7 @@ class PodcastArtifactOut(BaseModel):
 class ArtifactListOut(BaseModel):
     reports: List[ArtifactFileOut]
     quizzes: List[ArtifactFileOut]
+    flashcards: List[ArtifactFileOut]
     podcasts: List[PodcastArtifactOut]
 
 

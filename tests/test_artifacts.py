@@ -34,15 +34,19 @@ def test_generate_report_quiz_and_list(monkeypatch, tmp_path: Path):
 
     report = artifacts.generate_report(store, user_id="u1", notebook_id=nb.notebook_id, prompt="Focus")
     quiz = artifacts.generate_quiz(store, user_id="u1", notebook_id=nb.notebook_id, num_questions=5)
+    flashcards = artifacts.generate_flashcards(store, user_id="u1", notebook_id=nb.notebook_id, num_questions=6)
 
     assert report.artifact_type == "report"
     assert quiz.artifact_type == "quiz"
+    assert flashcards.artifact_type == "flashcards"
     assert Path(report.markdown_path).exists()
     assert Path(quiz.markdown_path).exists()
+    assert Path(flashcards.markdown_path).exists()
 
     listed = artifacts.list_artifacts(store, user_id="u1", notebook_id=nb.notebook_id)
     assert len(listed.reports) == 1
     assert len(listed.quizzes) == 1
+    assert len(listed.flashcards) == 1
     assert listed.podcasts == []
 
 

@@ -45,6 +45,12 @@ def test_artifact_endpoints_generate_list_and_download(monkeypatch, tmp_path: Pa
         headers=AUTH_U1,
     )
     assert report.status_code == 200
+    flashcards = client.post(
+        f"/api/notebooks/{nb.notebook_id}/artifacts/flashcards",
+        json={"user_id": "u1", "num_questions": 6},
+        headers=AUTH_U1,
+    )
+    assert flashcards.status_code == 200
 
     podcast = client.post(
         f"/api/notebooks/{nb.notebook_id}/artifacts/podcast",
@@ -62,6 +68,7 @@ def test_artifact_endpoints_generate_list_and_download(monkeypatch, tmp_path: Pa
     assert listed.status_code == 200
     payload = listed.json()
     assert len(payload["reports"]) == 1
+    assert len(payload["flashcards"]) == 1
     assert len(payload["podcasts"]) == 1
 
     dl = client.get(

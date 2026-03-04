@@ -62,6 +62,7 @@ def _artifact_dirs(store: NotebookStore, user_id: str, notebook_id: str) -> Dict
     dirs = {
         "report": root / "reports",
         "quiz": root / "quizzes",
+        "flashcards": root / "flashcards",
         "podcast": root / "podcasts",
     }
     for d in dirs.values():
@@ -183,6 +184,19 @@ def _podcast_transcript_fallback(sources: List[Dict[str, str]], extra_prompt: Op
     lines.append("**Co-Host:** That wraps the study summary. Review the report and quiz next.")
     lines.append("")
     return "\n".join(lines)
+
+
+def _flashcards_fallback(sources: List[Dict[str, str]], num_cards: int) -> str:
+    cards = max(3, min(20, int(num_cards)))
+    lines = ["# Flashcards", ""]
+    for i in range(1, cards + 1):
+        src = sources[(i - 1) % len(sources)]
+        snippet = src["text"].replace("\n", " ")[:200].strip()
+        lines.append(f"## Card {i}")
+        lines.append(f"Q: What key point appears in {src['source_name']}?")
+        lines.append(f"A: {snippet}")
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
 
 
 def _encode_pcm_to_mp3(pcm_16le: bytes, sample_rate: int, channels: int) -> bytes:
@@ -319,6 +333,40 @@ def generate_quiz(
     )
 
 
+def generate_flashcards(
+    store: NotebookStore,
+    *,
+    user_id: str,
+    notebook_id: str,
+    prompt: Optional[str] = None,
+    num_questions: int = 8,
+) -> ArtifactGenerateOut:
+    dirs = _artifact_dirs(store, user_id, notebook_id)
+    sources = _collect_source_texts(store, user_id, notebook_id)
+    if not sources:
+        raise ValueError("No ingested sources available. Upload or ingest sources first.")
+
+    cards = max(3, min(20, int(num_questions)))
+    focus = prompt.strip() if prompt else "Create concise study flashcards."
+    llm_prompt = (
+        "Create markdown flashcards from SOURCES.\n"
+        f"Include exactly {cards} cards in format:\n"
+        "## Card N\nQ: ...\nA: ...\n"
+        "Keep answers concise and grounded in source content.\n\n"
+        f"FOCUS:\n{focus}\n\n"
+        f"SOURCES:\n{_sources_block(sources)}\n"
+    )
+    content = _llm_or_fallback(llm_prompt, _flashcards_fallback(sources, cards))
+    out_path = _write_markdown_artifact(dirs["flashcards"], "flashcards", content)
+    return ArtifactGenerateOut(
+        artifact_type="flashcards",
+        message=f"Generated {out_path.name}",
+        markdown_path=str(out_path.as_posix()),
+        audio_path=None,
+        created_at=_now(),
+    )
+
+
 def generate_podcast(
     store: NotebookStore,
     *,
@@ -363,6 +411,7 @@ def list_artifacts(store: NotebookStore, *, user_id: str, notebook_id: str) -> A
 
     reports = [_artifact_file_out(p) for p in sorted(dirs["report"].glob("report_*.md"))]
     quizzes = [_artifact_file_out(p) for p in sorted(dirs["quiz"].glob("quiz_*.md"))]
+    flashcards = [_artifact_file_out(p) for p in sorted(dirs["flashcards"].glob("flashcards_*.md"))]
 
     podcast_indices: set[int] = set()
     for path in dirs["podcast"].glob("podcast_*.*"):
@@ -381,7 +430,7 @@ def list_artifacts(store: NotebookStore, *, user_id: str, notebook_id: str) -> A
             )
         )
 
-    return ArtifactListOut(reports=reports, quizzes=quizzes, podcasts=podcasts)
+    return ArtifactListOut(reports=reports, quizzes=quizzes, flashcards=flashcards, podcasts=podcasts)
 
 
 def resolve_artifact_path(
